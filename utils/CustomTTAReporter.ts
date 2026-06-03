@@ -48,6 +48,7 @@ interface TestData {
     error?: string;
     errorStack?: string;
     tags: string[];
+    consoleLogs?: string[];
 }
 
 interface FileGroup {
@@ -77,6 +78,7 @@ class CustomTTAReporter implements Reporter {
     private testStartTimeMap: Map<string, number> = new Map();
     private testStepCounterMap: Map<string, number> = new Map();
     private testCounter: number = 0;
+    private testIndexMap: Map<string, number> = new Map();
     private runningTests: Map<string, TestData> = new Map();
     private completedTestIds: Set<string> = new Set();
 
@@ -87,9 +89,9 @@ class CustomTTAReporter implements Reporter {
         this.config = config;
         this.startTime = new Date();
         const totalTests = suite.allTests().length;
-        
+
         console.log('\n╔════════════════════════════════════════════════════════════════╗');
-        console.log('║        🎭 TTA PLAYWRIGHT AUTOMATION - REAL-TIME REPORT         ║');
+        console.log('║        🎭 PLAYWRIGHT AUTOMATION - REAL-TIME REPORT         ║');
         console.log('╠════════════════════════════════════════════════════════════════╣');
         console.log(`║  📅 Started: ${this.startTime.toLocaleString().padEnd(47)}║`);
         console.log(`║  📊 Total Tests: ${String(totalTests).padEnd(44)}║`);
@@ -113,6 +115,7 @@ class CustomTTAReporter implements Reporter {
         this.testStartTimeMap.set(test.id, Date.now());
         this.testStepCounterMap.set(test.id, 0);
         this.testCounter++;
+        this.testIndexMap.set(test.id, this.testCounter);
 
         const testFile = test.location.file.split('/').pop() || '';
         console.log(`\n▶️  STARTING: ${test.title}`);
@@ -228,9 +231,11 @@ class CustomTTAReporter implements Reporter {
         let videoPath: string | undefined;
         let tracePath: string | undefined;
 
+        const testIndex = this.testIndexMap.get(test.id) ?? this.testCounter;
+
         for (const attachment of result.attachments) {
             if (attachment.contentType === 'image/png') {
-                const screenshotName = `screenshot_${this.testCounter}_${screenshots.length + 1}.png`;
+                const screenshotName = `screenshot_${testIndex}_${screenshots.length + 1}.png`;
                 const destPath = path.join('tta-report', 'screenshots', screenshotName);
                 const destDir = path.dirname(destPath);
                 if (!fs.existsSync(destDir)) {
@@ -252,7 +257,7 @@ class CustomTTAReporter implements Reporter {
             }
 
             if (attachment.contentType === 'video/webm' && attachment.path) {
-                const videoName = `video_${this.testCounter}.webm`;
+                const videoName = `video_${testIndex}.webm`;
                 const destPath = path.join('tta-report', 'videos', videoName);
                 const destDir = path.dirname(destPath);
                 if (!fs.existsSync(destDir)) {
@@ -267,7 +272,7 @@ class CustomTTAReporter implements Reporter {
             }
 
             if (attachment.name === 'trace' && attachment.path) {
-                const traceName = `trace_${this.testCounter}.zip`;
+                const traceName = `trace_${testIndex}.zip`;
                 const destPath = path.join('tta-report', 'traces', traceName);
                 const destDir = path.dirname(destPath);
                 if (!fs.existsSync(destDir)) {
@@ -320,6 +325,17 @@ class CustomTTAReporter implements Reporter {
 
         const tagMatches = test.title.match(/@\w+/g) || [];
 
+        // Collect all stdout/stderr console output for this test
+        const testConsoleLogs: string[] = [];
+        for (const chunk of result.stdout || []) {
+            const text: string = typeof chunk === 'string' ? chunk : chunk.toString();
+            text.split('\n').filter((l: string) => l.trim()).forEach((l: string) => testConsoleLogs.push(l));
+        }
+        for (const chunk of result.stderr || []) {
+            const text: string = typeof chunk === 'string' ? chunk : chunk.toString();
+            text.split('\n').filter((l: string) => l.trim()).forEach((l: string) => testConsoleLogs.push(`[stderr] ${l}`));
+        }
+
         const testData: TestData = {
             id: `test-${test.id}`,
             title: test.title,
@@ -337,6 +353,7 @@ class CustomTTAReporter implements Reporter {
             error: result.error?.message,
             errorStack: result.error?.stack,
             tags: tagMatches,
+            consoleLogs: testConsoleLogs,
         };
 
         this.testResults.push(testData);
@@ -839,10 +856,16 @@ class CustomTTAReporter implements Reporter {
                     <td class="col-duration">${duration}</td>
                     <td class="col-status"><span class="status-badge ${statusClass}">${statusText}</span></td>
                     <td class="col-screenshot">
-                        ${firstScreenshot ? `<a href="${firstScreenshot}" target="_blank" class="screenshot-link">📷 View</a>` : 'N/A'}
+                        ${firstScreenshot
+                            ? `<a href="${firstScreenshot}" class="screenshot-link thumb-link">
+                                <img src="${firstScreenshot}" class="thumb-screenshot" alt="screenshot"/>
+                               </a>`
+                            : '<span class="na-label">N/A</span>'}
                     </td>
                     <td class="col-video">
-                        ${test.video ? `<a href="${test.video}" target="_blank" class="video-link-cell">▶️ Play</a>` : 'N/A'}
+                        ${test.video
+                            ? `<video class="thumb-video" src="${test.video}" controls muted playsinline></video>`
+                            : '<span class="na-label">N/A</span>'}
                     </td>
                     <td class="col-trace">
                         ${test.trace ? `<a href="${test.trace}" target="_blank" class="trace-link-cell">📁 View</a>` : 'N/A'}
@@ -880,6 +903,24 @@ class CustomTTAReporter implements Reporter {
                     <div class="error-box">
                         <pre class="error-message">${this.escapeHtml(test.error)}</pre>
                         ${test.errorStack ? `<details class="stack-details"><summary>Call Stack</summary><pre class="stack-trace-content">${this.escapeHtml(test.errorStack)}</pre></details>` : ''}
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        if (test.consoleLogs && test.consoleLogs.length > 0) {
+            html += `
+            <div class="detail-section console-section">
+                <div class="section-header" onclick="toggleSection(this)">
+                    <span class="section-arrow">▼</span> 🖥️ Console Logs (${test.consoleLogs.length})
+                </div>
+                <div class="section-content">
+                    <div class="step-console-content">`;
+            for (const log of test.consoleLogs) {
+                const logClass = log.startsWith('[stderr]') ? 'console-line console-line-stderr' : 'console-line';
+                html += `<div class="${logClass}">${this.escapeHtml(log)}</div>`;
+            }
+            html += `
                     </div>
                 </div>
             </div>`;
@@ -1353,7 +1394,40 @@ class CustomTTAReporter implements Reporter {
         .col-starttime, .col-endtime { width: 160px; font-size: 12px; color: var(--gray-500); }
         .col-duration { width: 80px; text-align: center; font-weight: 600; }
         .col-status { width: 100px; text-align: center; }
-        .col-screenshot, .col-video, .col-trace { width: 80px; text-align: center; }
+        .col-screenshot { width: 160px; text-align: center; padding: 6px !important; }
+        .col-video      { width: 220px; text-align: center; padding: 6px !important; }
+        .col-trace      { width: 80px;  text-align: center; }
+
+        /* Inline thumbnail – screenshot */
+        .thumb-link { display: inline-block; }
+        .thumb-screenshot {
+            width: 140px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid var(--gray-200);
+            box-shadow: var(--shadow-sm);
+            cursor: zoom-in;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: block;
+        }
+        .thumb-screenshot:hover {
+            transform: scale(1.05);
+            box-shadow: var(--shadow);
+        }
+
+        /* Inline thumbnail – video */
+        .thumb-video {
+            width: 200px;
+            height: 112px;
+            border-radius: 6px;
+            border: 1px solid var(--gray-200);
+            box-shadow: var(--shadow-sm);
+            display: block;
+            background: #000;
+        }
+
+        .na-label { color: var(--gray-400); font-size: 12px; }
 
         .test-name-link {
             color: var(--dark);
@@ -1627,6 +1701,7 @@ class CustomTTAReporter implements Reporter {
             border-bottom: 1px solid rgba(255,255,255,0.05);
         }
         .console-line:last-child { border-bottom: none; }
+        .console-line-stderr { color: #fca5a5; }
 
         /* Screenshots */
         .step-screenshot { margin-bottom: 16px; }
@@ -1900,7 +1975,7 @@ class CustomTTAReporter implements Reporter {
             const modalImg = document.getElementById('modalImage');
             const closeBtn = document.querySelector('.modal-close');
 
-            document.querySelectorAll('.screenshot-link').forEach(link => {
+            document.querySelectorAll('.thumb-link').forEach(link => {
                 link.addEventListener('click', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1942,4 +2017,3 @@ class CustomTTAReporter implements Reporter {
 }
 
 export default CustomTTAReporter;
-

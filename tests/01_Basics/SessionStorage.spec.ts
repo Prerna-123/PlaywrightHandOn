@@ -4,7 +4,7 @@ const BASE_URL = 'https://assetessentials.dudesolutions.com/DudeSolutionsTestOID
 const LOGIN_URL = 'https://v1-identity.dudesolutions.io/app/login/username';
 
 
-  test('Create a new work order with asset and user, then verify it is saved',async({browser})=>{
+  test('Session Cration',async({browser})=>{
     const context= await browser.newContext();
     const page= await context.newPage();
     // ── Step 1: Login ──────────────────────────────────────────────────────────
